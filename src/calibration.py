@@ -22,7 +22,7 @@ import numpy as np
 try:
     from scipy.signal import find_peaks
     _HAS_SCIPY = True
-except ImportError:  # pragma: no cover - scipy é dependência declarada
+except ImportError:  
     _HAS_SCIPY = False
 
 
@@ -31,9 +31,9 @@ class CalibrationResult:
     """Resultado detalhado da calibração."""
 
     mm_per_px: float
-    method: str          # "auto" | "manual"
-    confidence: float    # 0..1
-    px_per_unit: float   # px medidos por unidade de referência (tick ou clique)
+    method: str    
+    confidence: float   
+    px_per_unit: float
 
 
 def calibrate(image, config, ruler_roi=None) -> float:
@@ -138,7 +138,7 @@ def _estimate_spacing(profile) -> tuple[float | None, float]:
     # Coeficiente de variação robusto → regularidade.
     cv = float(np.std(diffs) / median)
     regularity = max(0.0, 1.0 - cv)
-    # Mais ticks => mais confiança, saturando em ~10 espaçamentos.
+
     count_factor = min(1.0, diffs.size / 10.0)
     confidence = regularity * count_factor
     return median, confidence
@@ -150,7 +150,7 @@ def _find_peaks(profile) -> np.ndarray:
         # Distância mínima evita pegar o mesmo tick duas vezes; altura corta ruído.
         peaks, _ = find_peaks(profile, height=0.3, distance=3)
         return peaks
-    # Fallback: máximo local acima do limiar.
+
     thr = 0.3
     left = profile[1:-1] > profile[:-2]
     right = profile[1:-1] >= profile[2:]
@@ -158,9 +158,6 @@ def _find_peaks(profile) -> np.ndarray:
     return np.where(left & right & above)[0] + 1
 
 
-# --------------------------------------------------------------------------- #
-# Calibração manual por clique
-# --------------------------------------------------------------------------- #
 def _manual_calibrate(image, cal) -> CalibrationResult | None:
     """Coleta dois cliques e converte a distância conhecida em mm/px."""
     points = _collect_two_clicks(image, cal)
@@ -182,11 +179,6 @@ def _manual_calibrate(image, cal) -> CalibrationResult | None:
 
 
 def _collect_two_clicks(image, cal) -> list[tuple[int, int]] | None:
-    """Janela HighGUI: usuário clica 2 pontos da régua. ESC cancela.
-
-    Retorna as coordenadas nos pixels da imagem original (corrige o
-    redimensionamento de exibição).
-    """
     disp, scale = _fit_for_display(image, cal.max_display_width)
     window = "Calibracao: clique 2 pontos (dist. conhecida) | ENTER ok, ESC cancela"
     clicks: list[tuple[int, int]] = []
@@ -228,8 +220,6 @@ def _collect_two_clicks(image, cal) -> list[tuple[int, int]] | None:
 
 def _fit_for_display(image, max_width):
     """Reduz a imagem para caber na largura máxima de exibição.
-
-    Retorna (imagem_exibida, fator_de_escala). fator < 1 quando reduzida.
     """
     h, w = image.shape[:2]
     if w <= max_width:

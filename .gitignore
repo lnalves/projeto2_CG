@@ -15,3 +15,6 @@ output/
 
 # Sistema
 .DS_Store
+
+docs/
+*.md
