@@ -10,6 +10,14 @@ class CalibrationConfig:
     known_distance_mm: float = 90.0
     # Confiança mínima da detecção automática dos ticks para dispensar o clique.
     min_auto_confidence: float = 0.6
+    # Distância real (mm) entre dois ticks consecutivos da régua (menor divisão).
+    # Réguas comuns têm divisões de 1 mm.
+    tick_spacing_mm: float = 1.0
+    # ROI da régua para detecção automática: (x, y, w, h). None = sem ROI.
+    ruler_roi: tuple | None = None
+    # Largura máxima (px) da janela de clique manual; imagens maiores são
+    # reduzidas só para exibição (os cliques voltam às coordenadas originais).
+    max_display_width: int = 1200
 
 
 @dataclass
