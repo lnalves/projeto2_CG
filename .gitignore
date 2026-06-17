@@ -1,0 +1,22 @@
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Saídas geradas
+output/
+!output/.gitkeep
+
+# Sistema
+.DS_Store
+
+#others
+PLANO_DESEVOLVIMENTO.md
+CLAUDE.md
+docs/
