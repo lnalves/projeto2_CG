@@ -1,81 +1,86 @@
-"""Parâmetros centralizados do pipeline de medição de plântulas."""
+"""Parâmetros centralizados do pipeline de medição de plântulas.
+
+Mantenha aqui tudo que é ajustável por imagem/lote, para não espalhar
+"números mágicos" pelos módulos. As trackbars do OpenCV (Etapa 3) usam
+estes valores como ponto de partida.
+"""
 
 from dataclasses import dataclass, field
 
 
 @dataclass
-class CalibrationConfig:
+class ConfigCalibracao:
     # Distância real (mm) entre os dois pontos usados na calibração manual.
     # Ex.: marca de 1 cm a 10 cm na régua = 90 mm.
-    known_distance_mm: float = 90.0
+    distancia_conhecida_mm: float = 90.0
     # Confiança mínima da detecção automática dos ticks para dispensar o clique.
-    min_auto_confidence: float = 0.6
+    confianca_minima_auto: float = 0.6
     # Distância real (mm) entre dois ticks consecutivos da régua (menor divisão).
     # Réguas comuns têm divisões de 1 mm.
-    tick_spacing_mm: float = 1.0
+    espacamento_tick_mm: float = 1.0
     # ROI da régua para detecção automática: (x, y, w, h). None = sem ROI.
-    ruler_roi: tuple | None = None
+    regua_roi: tuple | None = None
     # Largura máxima (px) da janela de clique manual; imagens maiores são
     # reduzidas só para exibição (os cliques voltam às coordenadas originais).
-    max_display_width: int = 1200
+    largura_max_exibicao: int = 1200
 
 
 @dataclass
-class PreprocessConfig:
-    clahe_clip_limit: float = 2.0
-    clahe_tile_grid: int = 8
-    gaussian_ksize: int = 3  # ímpar
+class ConfigPreprocessamento:
+    clahe_limite_clip: float = 2.0
+    clahe_tamanho_grade: int = 8
+    gaussiana_ksize: int = 3  # ímpar
 
 
 @dataclass
-class SegmentationConfig:
-    # Threshold da semente escura (parte superior, escura/amarelada).
-    seed_thresh: int = 80
+class ConfigSegmentacao:
+    # Limiar da semente escura (parte superior, escura/amarelada).
+    limiar_semente: int = 80
     # Threshold adaptativo do filamento.
-    adaptive_block_size: int = 31  # ímpar
-    adaptive_c: int = 5
+    bloco_adaptativo: int = 31  # ímpar
+    c_adaptativo: int = 5
     # Morfologia.
-    morph_kernel: int = 3
-    morph_open_iter: int = 1
-    morph_close_iter: int = 2
+    kernel_morfologico: int = 3
+    iter_abertura: int = 1
+    iter_fechamento: int = 2
     # Área mínima (px) de um componente para contar como plântula.
-    min_area_px: int = 200
+    area_minima_px: int = 200
 
 
 @dataclass
-class SkeletonConfig:
+class ConfigEsqueleto:
     # Comprimento mínimo (px) de um ramo para NÃO ser podado (pruning).
-    min_branch_len_px: int = 15
+    comprimento_min_ramo_px: int = 15
 
 
 @dataclass
-class MeasureConfig:
+class ConfigMedicao:
     # Suavização do caminho por spline antes de somar comprimentos.
-    smooth_path: bool = True
-    spline_smoothing: float = 2.0
+    suavizar_caminho: bool = True
+    suavizacao_spline: float = 2.0
 
 
 @dataclass
-class RenderConfig:
-    seg1_color_bgr: tuple = (0, 255, 0)      # hipocótilo (topo → colo)
-    seg2_color_bgr: tuple = (0, 128, 255)    # raiz (colo → ponta)
-    point_radius: int = 5
-    font_scale: float = 0.6
-    thickness: int = 2
+class ConfigRenderizacao:
+    cor_seg1_bgr: tuple = (0, 255, 0)      # hipocótilo (topo → colo)
+    cor_seg2_bgr: tuple = (0, 128, 255)    # raiz (colo → ponta)
+    raio_ponto: int = 5
+    escala_fonte: float = 0.6
+    espessura: int = 2
 
 
 @dataclass
 class Config:
-    calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
-    preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
-    segmentation: SegmentationConfig = field(default_factory=SegmentationConfig)
-    skeleton: SkeletonConfig = field(default_factory=SkeletonConfig)
-    measure: MeasureConfig = field(default_factory=MeasureConfig)
-    render: RenderConfig = field(default_factory=RenderConfig)
+    calibracao: ConfigCalibracao = field(default_factory=ConfigCalibracao)
+    preprocessamento: ConfigPreprocessamento = field(default_factory=ConfigPreprocessamento)
+    segmentacao: ConfigSegmentacao = field(default_factory=ConfigSegmentacao)
+    esqueleto: ConfigEsqueleto = field(default_factory=ConfigEsqueleto)
+    medicao: ConfigMedicao = field(default_factory=ConfigMedicao)
+    renderizacao: ConfigRenderizacao = field(default_factory=ConfigRenderizacao)
 
     # Salvar imagens intermediárias em output/debug/.
     debug: bool = False
 
 
-def default_config() -> Config:
+def config_padrao() -> Config:
     return Config()
