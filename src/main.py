@@ -1,5 +1,5 @@
-"""
-Orquestra o pipeline de medição de plântulas de alface.
+"""Orquestra o pipeline de medição de plântulas de alface.
+
 Pipeline: carregar → calibrar → pré-processar → segmentar → esqueletizar
 → detectar pontos → medir → anotar/exportar.
 
@@ -14,11 +14,11 @@ import sys
 
 import cv2
 
-from calibration import calibrate_detailed
-from config import default_config
+from calibration import calibrar_detalhado
+from config import config_padrao
 
 
-def build_parser() -> argparse.ArgumentParser:
+def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="main.py",
         description="Mede plântulas de alface (hipocótilo + raiz) a partir de uma foto, em mm.",
@@ -51,15 +51,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_roi(text):
+def analisar_roi(texto):
     """Converte 'x,y,w,h' em uma tupla de inteiros. Erro claro se inválido."""
-    if text is None:
+    if texto is None:
         return None
-    parts = text.split(",")
-    if len(parts) != 4:
+    partes = texto.split(",")
+    if len(partes) != 4:
         raise ValueError("--ruler-roi deve ter 4 valores: x,y,w,h")
     try:
-        x, y, w, h = (int(p.strip()) for p in parts)
+        x, y, w, h = (int(p.strip()) for p in partes)
     except ValueError:
         raise ValueError("--ruler-roi deve conter inteiros: x,y,w,h")
     if w <= 0 or h <= 0:
@@ -68,38 +68,38 @@ def parse_roi(text):
 
 
 def main(argv=None) -> int:
-    parser = build_parser()
+    parser = construir_parser()
     args = parser.parse_args(argv)
 
-    config = default_config()
+    config = config_padrao()
     config.debug = args.debug
     if args.known_mm is not None:
-        config.calibration.known_distance_mm = args.known_mm
+        config.calibracao.distancia_conhecida_mm = args.known_mm
 
     if not args.image:
         parser.error("informe --image com o caminho da foto.")
 
     try:
-        ruler_roi = parse_roi(args.ruler_roi)
+        regua_roi = analisar_roi(args.ruler_roi)
     except ValueError as exc:
         parser.error(str(exc))
 
-    image = cv2.imread(args.image)
-    if image is None:
+    imagem = cv2.imread(args.image)
+    if imagem is None:
         print(f"erro: não foi possível ler a imagem '{args.image}'.", file=sys.stderr)
         return 1
 
     # --- Etapa 1: calibração (régua → mm/px) ---
     try:
-        cal = calibrate_detailed(image, config, ruler_roi=ruler_roi)
+        cal = calibrar_detalhado(imagem, config, regua_roi=regua_roi)
     except RuntimeError as exc:
         print(f"erro na calibração: {exc}", file=sys.stderr)
         return 1
 
     print(
-        f"Calibração [{cal.method}] confiança={cal.confidence:.2f} | "
-        f"escala={cal.mm_per_px:.5f} mm/px "
-        f"({1.0 / cal.mm_per_px:.2f} px/mm)"
+        f"Calibração [{cal.metodo}] confiança={cal.confianca:.2f} | "
+        f"escala={cal.mm_por_px:.5f} mm/px "
+        f"({1.0 / cal.mm_por_px:.2f} px/mm)"
     )
 
     # TODO: pré-processar → segmentar → esqueletizar → medir → anotar/exportar.
