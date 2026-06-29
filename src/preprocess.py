@@ -1,11 +1,9 @@
 """Etapa 2 — Pré-processamento e realce.
 
-O desafio do trabalho é que a plântula é esbranquiçada sobre papel branco.
 Para a segmentação (Etapa 3) ter material bom para trabalhar, geramos vários
 canais que realçam estruturas diferentes:
 
-  - `cinza`     : tons de cinza com CLAHE (contraste local) → bom para o
-                  filamento claro do hipocótilo/raiz.
+  - `cinza`     : tons de cinza com CLAHE (contraste local)
   - `saturacao` : canal S do HSV → a semente/cotilédones (amarelada) e partes
                   pigmentadas têm saturação maior que o papel branco.
   - `valor`     : canal V do HSV (luminância) → separa o escuro do claro.
@@ -20,8 +18,8 @@ segmentar.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -29,7 +27,6 @@ import numpy as np
 
 @dataclass
 class ResultadoPreprocessamento:
-    """Canais úteis para a segmentação (Etapa 3)."""
 
     cinza: np.ndarray          # cinza + CLAHE
     saturacao: np.ndarray      # HSV: S
@@ -107,7 +104,7 @@ def preprocessar(imagem, config, dir_debug: str | None = None) -> ResultadoPrepr
 
 def salvar_debug(resultado: ResultadoPreprocessamento, dir_debug: str) -> None:
     """Salva cada canal em PNG dentro de `dir_debug` (cria a pasta se preciso)."""
-    os.makedirs(dir_debug, exist_ok=True)
+    Path(dir_debug).mkdir(parents=True, exist_ok=True)
     canais = {
         "preprocess_cinza.png": resultado.cinza,
         "preprocess_saturacao.png": resultado.saturacao,
@@ -117,4 +114,4 @@ def salvar_debug(resultado: ResultadoPreprocessamento, dir_debug: str) -> None:
         "preprocess_suavizada.png": resultado.bgr_suavizada,
     }
     for nome, img in canais.items():
-        cv2.imwrite(os.path.join(dir_debug, nome), img)
+        cv2.imwrite(str(Path(dir_debug) / nome), img)

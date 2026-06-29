@@ -12,11 +12,14 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from log import log
+
 try:
     from scipy.interpolate import splev, splprep
     _TEM_INTERP = True
 except ImportError:
     _TEM_INTERP = False
+    log.warning("SciPy não disponível — spline desativado, usando soma poligonal.")
 
 
 @dataclass
@@ -26,14 +29,14 @@ class ResultadoMedicao:
     segmento1_mm: float
     segmento2_mm: float
     total_mm: float
-    caminho1: list = field(default_factory=list)  # [(y, x), ...] topo → colo
-    caminho2: list = field(default_factory=list)  # [(y, x), ...] colo → ponta
+    caminho1: list = field(default_factory=list)  # topo → colo
+    caminho2: list = field(default_factory=list)  #  colo → ponta
 
 
 # --- Comprimento ao longo do caminho ---------------------------------------
 
 def _comprimento_poligonal(caminho_yx) -> float:
-    """Soma das distâncias euclidianas entre pixels consecutivos do caminho."""
+    """Soma das distâncias entre pixels consecutivos do caminho."""
     if len(caminho_yx) < 2:
         return 0.0
     pts = np.asarray(caminho_yx, dtype=np.float64)
@@ -50,18 +53,21 @@ def _comprimento_suavizado(caminho_yx, s: float) -> float:
     ys, xs = pts[:, 0], pts[:, 1]
     try:
         tck, _ = splprep([xs, ys], s=s, k=min(3, n - 1))
-    except Exception:
+    except Exception as exc:
+        log.warning("Spline falhou (n={}): {} — usando soma poligonal.", n, exc)
         return _comprimento_poligonal(caminho_yx)
     u = np.linspace(0.0, 1.0, max(n * 4, 50))
     xs_s, ys_s = splev(u, tck)
     difs = np.diff(np.column_stack([ys_s, xs_s]), axis=0)
-    return float(np.hypot(difs[:, 0], difs[:, 1]).sum())
+    comp = float(np.hypot(difs[:, 0], difs[:, 1]).sum())
+    log.debug("Comprimento: poligonal={:.2f}px → spline={:.2f}px (s={})", _comprimento_poligonal(caminho_yx), comp, s)
+    return comp
 
 
 def comprimento_caminho_px(caminho_yx, config) -> float:
     """Comprimento do caminho em pixels, com ou sem suavização (config.medicao)."""
     med = config.medicao
-    if getattr(med, "suavizar_caminho", False):
+    if med.suavizar_caminho:
         return _comprimento_suavizado(caminho_yx, float(med.suavizacao_spline))
     return _comprimento_poligonal(caminho_yx)
 
@@ -78,6 +84,13 @@ def medir_caminho(caminho, idx_colo, escala_mm_px, config) -> ResultadoMedicao:
 
     seg1_mm = comprimento_caminho_px(caminho1, config) * escala_mm_px
     seg2_mm = comprimento_caminho_px(caminho2, config) * escala_mm_px
+
+    if seg1_mm < 0.5 or seg2_mm < 0.5:
+        log.warning(
+            "Segmento curto: seg1={:.2f}mm, seg2={:.2f}mm. "
+            "Verifique a posição do colo.", seg1_mm, seg2_mm,
+        )
+
     return ResultadoMedicao(
         segmento1_mm=seg1_mm,
         segmento2_mm=seg2_mm,

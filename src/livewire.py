@@ -1,16 +1,5 @@
-"""Medição semiautomática por caminho de custo mínimo (live-wire) — ADR 0001.
-
-Em vez de depender de uma segmentação binária limpa do filamento branco
-(inviável sobre papel branco), o usuário clica **topo** e **ponta** de cada
-plântula e o comprimento é o **caminho de custo mínimo** entre os dois cliques
-sobre uma imagem de custo derivada do realce black-hat: o filamento fraco fica
-"barato" e o papel "caro", então o caminho segue a curva real do filamento mesmo
-onde o threshold falharia. O **colo** é detectado automaticamente ao longo desse
-caminho (pela espessura) e a semente serve de **snap** para o clique do topo.
-
-Funções-núcleo (testáveis sem GUI): `imagem_custo`, `caminho_custo_minimo`,
-`indice_colo`, `detectar_sementes`/`snap_topo`, `medir_par`.
-A `ferramenta_livewire` é a interface HighGUI de cliques.
+"""Medição semiautomática por caminho de custo mínimo (live-wire) — ADR 0001
+A classe `LiveWireTool` é a interface HighGUI de cliques.
 """
 
 from __future__ import annotations
@@ -19,6 +8,7 @@ import cv2
 import numpy as np
 from skimage.graph import route_through_array
 
+from log import log
 from measure import medir_caminho
 from render import ResultadoPlantula
 
@@ -29,38 +19,47 @@ def _impar(n: int, minimo: int = 1) -> int:
     return n if n % 2 == 1 else n + 1
 
 
-def _blackhat_filamento(luminancia, lw) -> np.ndarray:
-    """Máscara binária do filamento por black-hat (estruturas finas escuras)."""
-    k = _impar(lw.blackhat_kernel, minimo=3)
+def _blackhat_raw(luminancia: np.ndarray, kernel_size: int) -> np.ndarray:
+    """Aplica black-hat morfológico e normaliza para [0, 1].
+
+    Retorna float64: valores altos = estruturas finas escuras (filamento).
+    """
+    k = _impar(kernel_size, minimo=3)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-    bh = cv2.morphologyEx(luminancia, cv2.MORPH_BLACKHAT, kernel)
-    if int(lw.limiar_blackhat) <= 0:
-        _, fila = cv2.threshold(bh, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    else:
-        _, fila = cv2.threshold(bh, int(lw.limiar_blackhat), 255, cv2.THRESH_BINARY)
-    return fila
+    bh = cv2.morphologyEx(luminancia, cv2.MORPH_BLACKHAT, kernel).astype(np.float64)
+    pico = bh.max()
+    return bh / pico if pico > 0 else bh
+
+
+def _mascara_blackhat(luminancia: np.ndarray, kernel_size: int, limiar: int) -> np.ndarray:
+    """Máscara binária do filamento por black-hat seguido de threshold."""
+    bh = _blackhat_raw(luminancia, kernel_size)
+    _, mascara = cv2.threshold(bh, limiar, 1, cv2.THRESH_BINARY)
+    return mascara.astype(np.uint8)
 
 
 # --- Imagem de custo e caminho ---------------------------------------------
 
 def imagem_custo(canais, config) -> np.ndarray:
-    """Custo por pixel: baixo no filamento (black-hat alto), alto no papel."""
+    """Custo por pixel: baixo no filamento (black-hat alto), alto no papel.
+
+    Usa o canal L do Lab (luminância perceptual equalizada) em vez do HSV V,
+    pois o L* é perceptual e o CLAHE já realçou o contraste local.
+    """
     lw = config.livewire
-    k = int(lw.blackhat_kernel) | 1
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-    bh = cv2.morphologyEx(canais.valor, cv2.MORPH_BLACKHAT, kernel).astype(np.float64)
-    pico = bh.max()
-    realce = bh / pico if pico > 0 else bh
-    # filamento (realce ~1) → custo ~0; papel (realce ~0) → custo ~1.
+    realce = _blackhat_raw(canais.lab_l, lw.blackhat_kernel)
     custo = (1.0 - realce) ** float(lw.custo_gamma)
     return custo + 1e-3  # piso evita custo zero (degenera o Dijkstra)
 
 
-def caminho_custo_minimo(custo, origem, destino, margem) -> list:
+def caminho_custo_minimo(
+    custo: np.ndarray, origem: tuple, destino: tuple, margem: int, area_max: int = 2_000_000
+) -> list | None:
     """Caminho de menor custo (lista de (y, x)) entre origem e destino.
 
     O roteamento roda só num recorte ao redor dos dois pontos (+ `margem`),
-    para ser rápido e local.
+    para ser rápido e local. Retorna None se a área do recorte exceder
+    `area_max` (OOM proteção).
     """
     h, w = custo.shape
     (y0, x0), (y1, x1) = origem, destino
@@ -68,12 +67,21 @@ def caminho_custo_minimo(custo, origem, destino, margem) -> list:
     ymax = min(h, max(y0, y1) + margem + 1)
     xmin = max(0, min(x0, x1) - margem)
     xmax = min(w, max(x0, x1) + margem + 1)
-    sub = np.ascontiguousarray(custo[ymin:ymax, xmin:xmax])
 
+    area = (ymax - ymin) * (xmax - xmin)
+    if area > area_max:
+        log.warning(
+            "Recorte muito grande para roteamento: {}px² (limite {}px²). "
+            "Aumente a margem ou reduza a imagem.",
+            area, area_max,
+        )
+        return None
+
+    sub = np.ascontiguousarray(custo[ymin:ymax, xmin:xmax])
     inicio = (y0 - ymin, x0 - xmin)
     fim = (y1 - ymin, x1 - xmin)
     caminho, _ = route_through_array(
-        sub, inicio, fim, fully_connected=True, geometric=True
+        sub, inicio, fim, fully_connected=True, geometric=True,
     )
     return [(int(p[0] + ymin), int(p[1] + xmin)) for p in caminho]
 
@@ -82,17 +90,20 @@ def caminho_custo_minimo(custo, origem, destino, margem) -> list:
 
 def mapa_espessura(canais, config) -> np.ndarray:
     """Espessura local (distância ao fundo) da máscara de filamento black-hat."""
-    mascara = _blackhat_filamento(canais.valor, config.livewire)
+    lw = config.livewire
+    mascara = _mascara_blackhat(canais.lab_l, lw.blackhat_kernel, int(lw.limiar_blackhat))
     return cv2.distanceTransform(mascara, cv2.DIST_L2, 5)
 
 
-def indice_colo(caminho, espessura) -> int:
+def indice_colo(caminho: list, espessura: np.ndarray) -> int:
     """Índice do colo no caminho: maior queda da espessura (mesma definição
     geométrica da Etapa 5), ignorando as extremidades.
     """
     n = len(caminho)
     if n < 5:
         return n // 2
+    if n < 20:
+        log.debug("Caminho curto ({}px) — colo pode ser impreciso.", n)
     esp = np.array([espessura[y, x] for (y, x) in caminho], dtype=np.float64)
     jan = max(3, n // 15)
     suave = np.convolve(esp, np.ones(jan) / jan, mode="same")
@@ -115,10 +126,11 @@ def detectar_sementes(canais, config) -> list:
     for lbl in range(1, num):
         if stats[lbl, cv2.CC_STAT_AREA] >= minimo:
             sementes.append(np.argwhere(rot == lbl))
+    log.info("Detectadas {} sementes (área mín. {}px)", len(sementes), minimo)
     return sementes
 
 
-def snap_topo(clique, sementes, raio) -> tuple:
+def snap_topo(clique: tuple, sementes: list, raio: int) -> tuple:
     """Se o clique cair perto de uma semente, devolve a borda INFERIOR dela
     (a junção semente↔hipocótilo = topo). Caso contrário, devolve o clique.
     """
@@ -133,23 +145,37 @@ def snap_topo(clique, sementes, raio) -> tuple:
         return (int(cy), int(cx))
     ymax = int(alvo[:, 0].max())
     xs = alvo[alvo[:, 0] == ymax][:, 1]
-    return (ymax, int(round(xs.mean())))
+    snapped = (ymax, int(round(xs.mean())))
+    log.debug("Snap topo: clique {} → semente em {}", (cy, cx), snapped)
+    return snapped
 
 
 # --- Medição de um par topo→ponta ------------------------------------------
 
-def medir_par(topo, ponta, custo, espessura, escala_mm_px, config):
+def medir_par(
+    topo: tuple, ponta: tuple, custo: np.ndarray, espessura: np.ndarray,
+    escala_mm_px: float, config,
+):
     """Calcula caminho, colo e medida de uma plântula a partir de 2 pontos.
 
     Retorna (medicao, caminho, colo) — `medicao` é um measure.ResultadoMedicao.
+    Pode retornar None se o roteamento falhar (recorte muito grande).
     """
-    caminho = caminho_custo_minimo(custo, topo, ponta, int(config.livewire.margem_bbox_px))
+    lw = config.livewire
+    caminho = caminho_custo_minimo(
+        custo, topo, ponta, int(lw.margem_bbox_px), int(lw.bbox_area_max_px),
+    )
+    if caminho is None:
+        log.error("Roteamento falhou entre topo {} e ponta {}", topo, ponta)
+        return None
     idx = indice_colo(caminho, espessura)
     medicao = medir_caminho(caminho, idx, escala_mm_px, config)
+    log.info("Plântula medida: {:.1f}mm (colo no índice {} do caminho)", medicao.total_mm, idx)
     return medicao, caminho, caminho[idx]
 
 
-# --- Ferramenta interativa (HighGUI) ---------------------------------------
+# --- Ferramenta interativa (HighGUI) ----------------------------------------
+
 
 def _ajustar_exibicao(imagem, largura_max):
     h, w = imagem.shape[:2]
@@ -159,98 +185,154 @@ def _ajustar_exibicao(imagem, largura_max):
     return cv2.resize(imagem, (largura_max, int(round(h * s))), interpolation=cv2.INTER_AREA), s
 
 
-def ferramenta_livewire(imagem, canais, escala_mm_px, config) -> list:
-    """Coleta plântulas por cliques (topo→ponta) e devolve [ResultadoPlantula].
+class LiveWireTool:
+    """Interface HighGUI interativa de cliques para medição live-wire.
 
-    Controles: clique 1 = topo (gruda na semente perto), clique 2 = ponta →
-    desenha o caminho e mede. Botão direito reposiciona o colo da última
-    plântula. 'z' desfaz a última, ENTER/'q' finaliza, ESC cancela tudo.
+    Controles:
+      - Clique esquerdo 1º → topo (gruda na semente perto)
+      - Clique esquerdo 2º → ponta → desenha caminho e mede
+      - Botão direito  → reposiciona o colo da última plântula
+      - 'z' → desfaz a última
+      - ENTER / 'q' → finaliza, ESC → cancela tudo
     """
-    custo = imagem_custo(canais, config)
-    espessura = mapa_espessura(canais, config)
-    sementes = detectar_sementes(canais, config)
-    ren = config.renderizacao
 
-    disp, escala_disp = _ajustar_exibicao(imagem, config.calibracao.largura_max_exibicao)
-    janela = "Live-wire: topo->ponta | dir=colo | z=desfaz ENTER=ok ESC=cancela"
-    cv2.namedWindow(janela, cv2.WINDOW_AUTOSIZE)
+    def __init__(self, imagem, canais, escala_mm_px, config):
+        self.imagem = imagem
+        self.canais = canais
+        self.escala_mm_px = escala_mm_px
+        self.config = config
+        self.ren = config.renderizacao
 
-    estado = {"fase": "topo", "topo": None, "cancelar": False}
-    resultados: list = []
+        self.custo = imagem_custo(canais, config)
+        self.espessura = mapa_espessura(canais, config)
+        self.sementes = detectar_sementes(canais, config)
 
-    def orig(mx, my):
-        return (int(round(my / escala_disp)), int(round(mx / escala_disp)))
+        self.disp, self.escala_disp = _ajustar_exibicao(
+            imagem, config.calibracao.largura_max_exibicao,
+        )
+        self.janela = "Live-wire: topo->ponta | dir=colo | z=desfaz ENTER=ok ESC=cancela"
+        cv2.namedWindow(self.janela, cv2.WINDOW_AUTOSIZE)
+        cv2.setMouseCallback(self.janela, self._on_mouse)
 
-    def ao_clicar(evento, mx, my, flags, param):
+        self.fase = "topo"
+        self.topo_atual: tuple | None = None
+        self.resultados: list[ResultadoPlantula] = []
+        self.cancelar = False
+
+    # --- conversão de coordenadas ------------------------------------------
+
+    def _orig(self, mx: int, my: int) -> tuple[int, int]:
+        """Coordenadas da imagem original a partir do clique na tela."""
+        return (int(round(my / self.escala_disp)), int(round(mx / self.escala_disp)))
+
+    def _ponto_disp(self, yx: tuple) -> tuple[int, int]:
+        """Coordenadas da tela a partir de um ponto (y, x) original."""
+        return (int(round(yx[1] * self.escala_disp)), int(round(yx[0] * self.escala_disp)))
+
+    # --- callback de mouse -------------------------------------------------
+
+    def _on_mouse(self, evento, mx, my, flags, param):
         if evento == cv2.EVENT_LBUTTONDOWN:
-            p = orig(mx, my)
-            if estado["fase"] == "topo":
-                estado["topo"] = snap_topo(p, sementes, config.livewire.snap_raio_px)
-                estado["fase"] = "ponta"
+            p = self._orig(mx, my)
+            if self.fase == "topo":
+                self.topo_atual = snap_topo(p, self.sementes, self.config.livewire.snap_raio_px)
+                self.fase = "ponta"
+                log.debug("Topo marcado em {}", self.topo_atual)
             else:
-                med, caminho, colo = medir_par(
-                    estado["topo"], p, custo, espessura, escala_mm_px, config
-                )
-                resultados.append(ResultadoPlantula(
-                    id=len(resultados) + 1, topo=estado["topo"], colo=colo,
-                    ponta=p, medicao=med,
-                ))
-                estado["fase"] = "topo"
-                estado["topo"] = None
-        elif evento == cv2.EVENT_RBUTTONDOWN and resultados:
-            # Reposiciona o colo da última plântula no ponto do caminho mais
-            # próximo do clique, e remede.
-            p = orig(mx, my)
-            r = resultados[-1]
-            caminho = r.medicao.caminho1[:-1] + r.medicao.caminho2
-            d = [(yy - p[0]) ** 2 + (xx - p[1]) ** 2 for (yy, xx) in caminho]
-            idx = int(np.argmin(d))
-            nova = medir_caminho(caminho, idx, escala_mm_px, config)
-            resultados[-1] = ResultadoPlantula(
-                id=r.id, topo=r.topo, colo=caminho[idx], ponta=r.ponta, medicao=nova,
+                resultado = self._medir_par(self.topo_atual, p)
+                if resultado is not None:
+                    self.resultados.append(resultado)
+                self.fase = "topo"
+                self.topo_atual = None
+        elif evento == cv2.EVENT_RBUTTONDOWN and self.resultados:
+            p = self._orig(mx, my)
+            self._reposicionar_colo(p)
+
+    def _medir_par(self, topo, ponta) -> ResultadoPlantula | None:
+        med = medir_par(topo, ponta, self.custo, self.espessura, self.escala_mm_px, self.config)
+        if med is None:
+            return None
+        medicao, caminho, colo = med
+        return ResultadoPlantula(
+            id=len(self.resultados) + 1,
+            topo=topo,
+            colo=colo,
+            ponta=ponta,
+            medicao=medicao,
+        )
+
+    def _reposicionar_colo(self, clique: tuple):
+        """Reposiciona o colo da última plântula no ponto do caminho mais
+        próximo do clique, e remede."""
+        r = self.resultados[-1]
+        caminho = r.medicao.caminho1[:-1] + r.medicao.caminho2
+        d = [(yy - clique[0]) ** 2 + (xx - clique[1]) ** 2 for (yy, xx) in caminho]
+        idx = int(np.argmin(d))
+        nova = medir_caminho(caminho, idx, self.escala_mm_px, self.config)
+        self.resultados[-1] = ResultadoPlantula(
+            id=r.id, topo=r.topo, colo=caminho[idx], ponta=r.ponta, medicao=nova,
+        )
+        log.info("Colo da plântula #{} reposicionado.", r.id)
+
+    # --- renderização ------------------------------------------------------
+
+    def _desenhar(self, tela):
+        for r in self.resultados:
+            for caminho, cor in (
+                (r.medicao.caminho1, self.ren.cor_seg1_bgr),
+                (r.medicao.caminho2, self.ren.cor_seg2_bgr),
+            ):
+                if len(caminho) > 1:
+                    pts = np.array([self._ponto_disp(p) for p in caminho], np.int32).reshape(-1, 1, 2)
+                    cv2.polylines(tela, [pts], False, cor, 2)
+            cv2.circle(tela, self._ponto_disp(r.topo), 4, (0, 220, 0), -1)
+            cv2.circle(tela, self._ponto_disp(r.colo), 4, (0, 0, 255), -1)
+            cv2.circle(tela, self._ponto_disp(r.ponta), 4, (255, 0, 0), -1)
+            cv2.putText(
+                tela, f"#{r.id}: {r.medicao.total_mm:.1f}mm",
+                (self._ponto_disp(r.topo)[0] + 6, self._ponto_disp(r.topo)[1] - 6),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 0), 1, cv2.LINE_AA,
             )
+        if self.topo_atual is not None:
+            cv2.circle(tela, self._ponto_disp(self.topo_atual), 5, (0, 255, 255), 2)
+        cv2.putText(
+            tela, f"plantulas: {len(self.resultados)} | fase: {self.fase}",
+            (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2,
+        )
 
-    cv2.setMouseCallback(janela, ao_clicar)
+    # --- loop principal ----------------------------------------------------
 
-    def ponto_disp(yx):
-        return (int(round(yx[1] * escala_disp)), int(round(yx[0] * escala_disp)))
+    def run(self) -> list[ResultadoPlantula]:
+        log.info("Live-wire: coleta de plântulas iniciada.")
+        try:
+            while True:
+                tela = self.disp.copy()
+                self._desenhar(tela)
+                cv2.imshow(self.janela, tela)
 
-    try:
-        while True:
-            tela = disp.copy()
-            for r in resultados:
-                for caminho, cor in (
-                    (r.medicao.caminho1, ren.cor_seg1_bgr),
-                    (r.medicao.caminho2, ren.cor_seg2_bgr),
-                ):
-                    if len(caminho) > 1:
-                        pts = np.array([ponto_disp(p) for p in caminho], np.int32).reshape(-1, 1, 2)
-                        cv2.polylines(tela, [pts], False, cor, 2)
-                cv2.circle(tela, ponto_disp(r.topo), 4, (0, 220, 0), -1)
-                cv2.circle(tela, ponto_disp(r.colo), 4, (0, 0, 255), -1)
-                cv2.circle(tela, ponto_disp(r.ponta), 4, (255, 0, 0), -1)
-                cv2.putText(tela, f"#{r.id}: {r.medicao.total_mm:.1f}mm",
-                            (ponto_disp(r.topo)[0] + 6, ponto_disp(r.topo)[1] - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 0), 1, cv2.LINE_AA)
-            if estado["topo"] is not None:
-                cv2.circle(tela, ponto_disp(estado["topo"]), 5, (0, 255, 255), 2)
-            cv2.putText(tela, f"plantulas: {len(resultados)} | fase: {estado['fase']}",
-                        (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-            cv2.imshow(janela, tela)
+                tecla = cv2.waitKey(20) & 0xFF
+                if tecla == 27:
+                    self.cancelar = True
+                    log.info("Live-wire cancelado pelo usuário.")
+                    break
+                if tecla in (13, 10) or tecla == ord("q"):
+                    log.info("Live-wire finalizado com {} plântulas.", len(self.resultados))
+                    break
+                if tecla == ord("z") and self.resultados:
+                    self.resultados.pop()
+                    for i, r in enumerate(self.resultados):
+                        r.id = i + 1
+                    self.fase = "topo"
+                    self.topo_atual = None
+                    log.debug("Última plântula desfeita.")
+        finally:
+            cv2.destroyWindow(self.janela)
 
-            tecla = cv2.waitKey(20) & 0xFF
-            if tecla == 27:  # ESC
-                estado["cancelar"] = True
-                break
-            if tecla in (13, 10) or tecla == ord("q"):  # ENTER / q
-                break
-            if tecla == ord("z") and resultados:  # desfaz
-                resultados.pop()
-                for i, r in enumerate(resultados):
-                    r.id = i + 1
-                estado["fase"] = "topo"
-                estado["topo"] = None
-    finally:
-        cv2.destroyWindow(janela)
+        return [] if self.cancelar else self.resultados
 
-    return [] if estado["cancelar"] else resultados
+
+# --- Função de compatibilidade (delega para a classe) ----------------------
+
+def ferramenta_livewire(imagem, canais, escala_mm_px, config) -> list:
+    """Compatibilidade: delega para LiveWireTool."""
+    return LiveWireTool(imagem, canais, escala_mm_px, config).run()

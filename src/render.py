@@ -1,4 +1,4 @@
-"""Etapa 7 — Saída: imagem anotada + tabela.
+"""Saída: imagem anotada + tabela.
 
 Desenha, para cada plântula:
   - o caminho do **segmento 1** (hipocótilo) e do **segmento 2** (raiz) em cores
@@ -10,7 +10,7 @@ E exporta a tabela de medidas (`pandas` → CSV) com as colunas
 `id, segmento1_mm, segmento2_mm, total_mm`.
 
 `ResultadoPlantula` é a unidade que o `main.py` monta por plântula e entrega
-aqui — agrega o id, os três pontos (y, x) e a medição (Etapa 6).
+aqui — agrega o id, os três pontos (y, x) e a medição.
 """
 
 from __future__ import annotations
@@ -49,8 +49,7 @@ def _para_xy(caminho_yx):
 
 def anotar_imagem(imagem, resultados, config) -> np.ndarray:
     """Desenha caminhos, pontos e rótulos de todas as plântulas sobre a imagem.
-
-    `resultados` é uma lista de `ResultadoPlantula`. Retorna uma cópia anotada
+    Retorna uma cópia anotada
     (a imagem original não é modificada).
     """
     ren = config.renderizacao

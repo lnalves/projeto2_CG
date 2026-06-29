@@ -1,0 +1,34 @@
+# Configuração do medidor de plântulas de alface
+# Uso: python src/main.py --image <path> --config config.yaml
+
+calibracao:
+  distancia_conhecida_mm: 90.0
+  confianca_minima_auto: 0.6
+  espacamento_tick_mm: 1.0
+  largura_max_exibicao: 1200
+
+preprocessamento:
+  clahe_limite_clip: 2.0
+  clahe_tamanho_grade: 8
+  gaussiana_ksize: 3
+
+medicao:
+  suavizar_caminho: true
+  suavizacao_spline: 2.0
+
+livewire:
+  blackhat_kernel: 21
+  custo_gamma: 3.0
+  margem_bbox_px: 60
+  bbox_area_max_px: 2000000
+  limiar_blackhat: 10
+  limiar_semente: 80
+  semente_area_min: 50
+  snap_raio_px: 45
+
+renderizacao:
+  cor_seg1_bgr: [0, 255, 0]
+  cor_seg2_bgr: [0, 128, 255]
+  raio_ponto: 5
+  escala_fonte: 0.6
+  espessura: 2
