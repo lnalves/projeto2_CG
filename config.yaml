@@ -1,11 +1,14 @@
 # Configuração do medidor de plântulas de alface
 # Uso: python src/main.py --image <path> --config config.yaml
+#
+# Todos os campos são opcionais — o que faltar usa o default de src/config.py.
 
 calibracao:
-  distancia_conhecida_mm: 90.0
+  distancia_conhecida_mm: 90.0   # distância real (mm) entre os 2 cliques da régua
   confianca_minima_auto: 0.6
   espacamento_tick_mm: 1.0
-  largura_max_exibicao: 1200
+  largura_max_exibicao: 1200     # teto de largura (px) da janela, além do limite da tela
+  margem_tela: 0.9               # fração da tela usada pela janela (0.85 se ainda estourar)
 
 preprocessamento:
   clahe_limite_clip: 2.0
@@ -21,14 +24,22 @@ livewire:
   custo_gamma: 3.0
   margem_bbox_px: 60
   bbox_area_max_px: 2000000
-  limiar_blackhat: 10
-  limiar_semente: 80
-  semente_area_min: 50
-  snap_raio_px: 45
+  limiar_blackhat: 0             # 0 = Otsu automático (escala 0–255). NÃO usar 10 aqui!
+  limiar_semente: 80             # luminância máxima da semente (V abaixo disto = semente)
+  semente_area_min: 80           # área mínima (px) de um componente para ser semente
+  semente_area_max: 3000         # área máxima (px) — descarta bordas/sombras grandes
+  semente_aspecto_max: 4.0       # razão de aspecto máx. — descarta linhas finas (régua/borda)
+  semente_abertura_px: 3         # abertura morfológica antes de rotular (0 desliga)
+  roi_papel: true                # restringe sementes à ROI do papel-filtro
+  roi_valor_min: 150             # V mínimo de um pixel candidato a papel
+  roi_sat_max: 60                # saturação máx. de um pixel candidato a papel
+  roi_area_min_frac: 0.1         # papel deve cobrir ≥ 10% da imagem (senão ignora a ROI)
+  roi_morfologia_px: 15          # kernel de fechamento/abertura da máscara do papel
+  snap_raio_px: 45               # raio (px) do snap do topo na semente mais próxima
 
 renderizacao:
-  cor_seg1_bgr: [0, 255, 0]
-  cor_seg2_bgr: [0, 128, 255]
+  cor_seg1_bgr: [0, 255, 0]      # hipocótilo (verde)
+  cor_seg2_bgr: [0, 128, 255]    # raiz (laranja)
   raio_ponto: 5
   escala_fonte: 0.6
   espessura: 2
