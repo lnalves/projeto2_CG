@@ -65,17 +65,40 @@ A **calibração da régua** é feita **manualmente**: você clica em **2 pontos
 
 Veja todas as opções com `python src/main.py --help`.
 
+### Configuração
+
+Parâmetros do pipeline ficam em `src/config.py` (com defaults) e podem ser
+sobrescritos por um arquivo YAML passado com `--config`:
+
+```bash
+python src/main.py --image data/IMG_3196.png --config config.yaml
+```
+
+O `config.yaml` faz *merge* com os defaults — só é preciso listar o que mudar.
+
+### Detecção das plântulas
+
+Como o filamento é branco translúcido sobre papel branco, a medição segue o
+**caminho de custo mínimo** (live-wire) entre os 2 cliques, realçando o filamento
+por *black-hat* morfológico. O **colo** é detectado automaticamente pela queda de
+espessura ao longo do caminho. As **sementes** (usadas no *snap* do topo) são
+filtradas por área, forma e por uma **ROI do papel-filtro**, descartando régua,
+rótulos e bordas da caixa.
+
 ## Estrutura
 
 ```
 data/                imagens de entrada
 output/              imagens anotadas + tabelas geradas
+config.yaml          configuração opcional (sobrescreve os defaults)
 src/
-├── main.py          orquestra o pipeline
-├── config.py        parâmetros ajustáveis
-├── calibration.py   régua → escala (px/mm) + seleção da ROI
-├── preprocess.py    pré-processamento e realce
-├── livewire.py      medição por cliques (caminho de custo mínimo)
-├── measure.py       comprimento ao longo do caminho
-└── render.py        marcações na imagem + tabela
+├── main.py          orquestra o pipeline (CLI)
+├── config.py        parâmetros ajustáveis (validados por pydantic)
+├── calibration.py   régua → escala (px/mm) por 2 cliques
+├── preprocess.py    pré-processamento e realce (canais de cor + CLAHE)
+├── livewire.py      medição por cliques + detecção de sementes/colo/ROI
+├── measure.py       comprimento ao longo do caminho (poligonal/spline) → mm
+├── render.py        marcações na imagem + tabela CSV
+├── display.py       ajuste das janelas ao tamanho da tela
+└── log.py           logging (loguru)
 ```
