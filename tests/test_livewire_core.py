@@ -103,6 +103,7 @@ class MockCanais:
     def __init__(self, h=100, w=100):
         self.lab_l = np.ones((h, w), dtype=np.uint8) * 180
         self.valor = np.ones((h, w), dtype=np.uint8) * 200
+        self.saturacao = np.zeros((h, w), dtype=np.uint8)  # papel = pouco saturado
 
 
 class TestImagemCusto:
@@ -174,6 +175,27 @@ class TestDetectarSementes:
         sementes = detectar_sementes(canais, config)
         assert len(sementes) == 1
         assert sementes[0].shape[1] == 2  # (N, 2)
+
+    def test_linha_fina_descartada(self, config):
+        """Estrutura alongada (régua/borda) é descartada pelo filtro de aspecto."""
+        canais = MockCanais(h=80, w=80)
+        canais.valor[:] = 200
+        config.livewire.semente_abertura_px = 0  # não apagar antes de testar aspecto
+        canais.valor[40:43, 5:75] = 30  # linha fina (aspecto ~23)
+        sementes = detectar_sementes(canais, config)
+        assert sementes == []
+
+    def test_semente_fora_da_roi_descartada(self, config):
+        """Semente fora do papel-filtro é descartada pela ROI."""
+        canais = MockCanais(h=200, w=200)
+        canais.valor[:] = 100              # fundo: não é papel (V < roi_valor_min)
+        canais.valor[50:150, 50:150] = 200  # papel-filtro central (claro)
+        canais.valor[90:100, 90:100] = 30   # semente DENTRO do papel
+        canais.valor[10:20, 10:20] = 30     # semente FORA do papel (régua/fundo)
+        sementes = detectar_sementes(canais, config)
+        assert len(sementes) == 1
+        cy = sementes[0][:, 0].mean()
+        assert 50 <= cy <= 150  # a que sobrou está dentro do papel
 
 
 class TestSnapTopo:
