@@ -15,8 +15,7 @@ anotada** + uma **tabela CSV** com id e medidas.
 Como o filamento é branco translúcido sobre papel branco (contraste baixíssimo), a
 medição é **semiautomática**: para cada plântula você clica **topo** e **ponta**, e
 o programa traça o **caminho de custo mínimo** entre eles seguindo a curva real do
-filamento, detectando o colo automaticamente. Veja
-[CONTEXT.md](CONTEXT.md) e [docs/adr/0001](docs/adr/0001-medicao-semiautomatica-live-wire.md).
+filamento, detectando o colo automaticamente.
 
 ## Requisitos
 
