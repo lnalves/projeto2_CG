@@ -46,9 +46,11 @@ def _impar(n: int) -> int:
 
 
 def _para_bgr(imagem: np.ndarray) -> np.ndarray:
-    """Aceita imagem em cinza ou BGR; devolve sempre BGR de 3 canais."""
+    """Aceita imagem em cinza, BGR ou BGRA; devolve sempre BGR de 3 canais."""
     if imagem.ndim == 2:
         return cv2.cvtColor(imagem, cv2.COLOR_GRAY2BGR)
+    if imagem.shape[2] == 4:
+        return cv2.cvtColor(imagem, cv2.COLOR_BGRA2BGR)
     return imagem
 
 

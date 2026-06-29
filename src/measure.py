@@ -1,42 +1,22 @@
-"""Etapa 6 — Medição pelo caminho real + conversão de escala.
+"""Medição do comprimento ao longo do caminho + conversão de escala.
 
-O esqueleto (Etapa 4) é modelado como um **grafo**: cada pixel é um nó, ligado
-aos vizinhos do esqueleto com peso **1** (ortogonal) ou **√2** (diagonal). O
-comprimento real de um trecho é o **menor caminho** (Dijkstra) entre dois
-pontos — somando os pesos ao longo do caminho, o que acompanha curvas e partes
-enroladas (e não a linha reta).
-
-`medir_segmentos` mede os dois segmentos da plântula:
-  - Segmento 1 (hipocótilo): topo → colo.
-  - Segmento 2 (raiz):       colo → ponta.
-
-Opcionalmente o caminho é suavizado por spline antes de medir, reduzindo o
-serrilhado do esqueleto (que tende a superestimar o comprimento).
-
-As funções de grafo (`construir_grafo`, `dijkstra_de`, `caminho_entre`) também
-são usadas pela Etapa 5 (`skeleton.detectar_pontos`) para ordenar o caminho.
+Na medição semiautomática (live-wire, ADR 0001), o caminho já vem ordenado
+(topo→ponta) do roteamento de custo mínimo; aqui ele é partido no colo e cada
+trecho é convertido para mm. Opcionalmente o caminho é suavizado por spline
+antes de medir, reduzindo o serrilhado (que tende a superestimar o comprimento).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from math import sqrt
 
 import numpy as np
-from scipy.sparse import csr_matrix
-from scipy.sparse.csgraph import dijkstra
 
 try:
     from scipy.interpolate import splev, splprep
     _TEM_INTERP = True
 except ImportError:
     _TEM_INTERP = False
-
-# Deslocamentos dos 8 vizinhos e seus pesos (1 ortogonal, √2 diagonal).
-_VIZINHOS_8 = [
-    (-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
-    (-1, -1, sqrt(2)), (-1, 1, sqrt(2)), (1, -1, sqrt(2)), (1, 1, sqrt(2)),
-]
 
 
 @dataclass
@@ -48,74 +28,6 @@ class ResultadoMedicao:
     total_mm: float
     caminho1: list = field(default_factory=list)  # [(y, x), ...] topo → colo
     caminho2: list = field(default_factory=list)  # [(y, x), ...] colo → ponta
-
-
-# --- Grafo do esqueleto ----------------------------------------------------
-
-def construir_grafo(esq_bool: np.ndarray):
-    """Constrói o grafo esparso do esqueleto.
-
-    Retorna (grafo_csr, pixels, idx_map):
-      - grafo_csr: matriz esparsa NxN com os pesos das arestas;
-      - pixels:    array (N, 2) com as coordenadas (y, x) de cada nó;
-      - idx_map:   dict (y, x) -> índice do nó.
-    """
-    pixels = np.argwhere(esq_bool)
-    idx_map = {(int(y), int(x)): i for i, (y, x) in enumerate(pixels)}
-    h, w = esq_bool.shape
-
-    linhas, colunas, pesos = [], [], []
-    for i, (y, x) in enumerate(pixels):
-        for dy, dx, peso in _VIZINHOS_8:
-            ny, nx = int(y) + dy, int(x) + dx
-            if 0 <= ny < h and 0 <= nx < w and esq_bool[ny, nx]:
-                j = idx_map[(ny, nx)]
-                linhas.append(i)
-                colunas.append(j)
-                pesos.append(peso)
-
-    n = len(pixels)
-    grafo = csr_matrix((pesos, (linhas, colunas)), shape=(n, n))
-    return grafo, pixels, idx_map
-
-
-def dijkstra_de(grafo, idx_origem):
-    """Dijkstra a partir de um nó. Retorna (distancias, predecessores)."""
-    dist, pred = dijkstra(
-        grafo, directed=False, indices=idx_origem, return_predecessors=True
-    )
-    return dist, pred
-
-
-def reconstruir_caminho(pred, idx_origem, idx_destino, pixels):
-    """Reconstrói a lista de pixels (y, x) do caminho origem → destino."""
-    if idx_destino < 0 or pred[idx_destino] == -9999 and idx_destino != idx_origem:
-        return []
-    caminho_idx = []
-    atual = idx_destino
-    # Limite de segurança contra inconsistências.
-    for _ in range(len(pixels) + 1):
-        caminho_idx.append(atual)
-        if atual == idx_origem:
-            break
-        atual = pred[atual]
-        if atual == -9999:
-            return []  # sem caminho conectado
-    caminho_idx.reverse()
-    return [(int(pixels[i][0]), int(pixels[i][1])) for i in caminho_idx]
-
-
-def caminho_entre(grafo, pixels, idx_map, origem_yx, destino_yx):
-    """Caminho (lista de (y, x)) e comprimento em px entre dois pontos do grafo."""
-    o = idx_map.get((int(origem_yx[0]), int(origem_yx[1])))
-    d = idx_map.get((int(destino_yx[0]), int(destino_yx[1])))
-    if o is None or d is None:
-        return [], 0.0
-    dist, pred = dijkstra_de(grafo, o)
-    if not np.isfinite(dist[d]):
-        return [], 0.0
-    caminho = reconstruir_caminho(pred, o, d, pixels)
-    return caminho, float(dist[d])
 
 
 # --- Comprimento ao longo do caminho ---------------------------------------
@@ -154,24 +66,18 @@ def comprimento_caminho_px(caminho_yx, config) -> float:
     return _comprimento_poligonal(caminho_yx)
 
 
-def medir_segmentos(esqueleto, topo, colo, ponta, escala_mm_px, config) -> ResultadoMedicao:
-    """Mede os 2 segmentos da plântula em mm seguindo o caminho real do esqueleto.
+def medir_caminho(caminho, idx_colo, escala_mm_px, config) -> ResultadoMedicao:
+    """Mede um caminho já ordenado (topo→ponta), partido no índice do colo.
 
-    `esqueleto` é a imagem 0/255 (1px) da plântula; `topo`, `colo` e `ponta` são
-    pontos (y, x) sobre o esqueleto (Etapa 5); `escala_mm_px` vem da calibração.
+    O `caminho` é a lista de pixels (y, x) do caminho de custo mínimo entre os
+    2 cliques (live-wire) e `idx_colo` é a posição do colo nessa lista.
     """
-    esq_bool = esqueleto > 0
-    grafo, pixels, idx_map = construir_grafo(esq_bool)
+    idx = max(1, min(int(idx_colo), len(caminho) - 1)) if len(caminho) > 1 else 0
+    caminho1 = caminho[: idx + 1]
+    caminho2 = caminho[idx:]
 
-    caminho1, _ = caminho_entre(grafo, pixels, idx_map, topo, colo)
-    caminho2, _ = caminho_entre(grafo, pixels, idx_map, colo, ponta)
-
-    seg1_px = comprimento_caminho_px(caminho1, config)
-    seg2_px = comprimento_caminho_px(caminho2, config)
-
-    seg1_mm = seg1_px * escala_mm_px
-    seg2_mm = seg2_px * escala_mm_px
-
+    seg1_mm = comprimento_caminho_px(caminho1, config) * escala_mm_px
+    seg2_mm = comprimento_caminho_px(caminho2, config) * escala_mm_px
     return ResultadoMedicao(
         segmento1_mm=seg1_mm,
         segmento2_mm=seg2_mm,

@@ -1,8 +1,8 @@
 """Parâmetros centralizados do pipeline de medição de plântulas.
 
-Mantenha aqui tudo que é ajustável por imagem/lote, para não espalhar
-"números mágicos" pelos módulos. As trackbars do OpenCV (Etapa 3) usam
-estes valores como ponto de partida.
+A medição é semiautomática por live-wire (ADR 0001): o usuário clica topo e
+ponta e o comprimento é o caminho de custo mínimo entre eles. Os parâmetros do
+custo (black-hat), do colo e do snap da semente ficam em `ConfigLivewire`.
 """
 
 from dataclasses import dataclass, field
@@ -16,12 +16,11 @@ class ConfigCalibracao:
     # Confiança mínima da detecção automática dos ticks para dispensar o clique.
     confianca_minima_auto: float = 0.6
     # Distância real (mm) entre dois ticks consecutivos da régua (menor divisão).
-    # Réguas comuns têm divisões de 1 mm.
     espacamento_tick_mm: float = 1.0
     # ROI da régua para detecção automática: (x, y, w, h). None = sem ROI.
     regua_roi: tuple | None = None
-    # Largura máxima (px) da janela de clique manual; imagens maiores são
-    # reduzidas só para exibição (os cliques voltam às coordenadas originais).
+    # Largura máxima (px) das janelas interativas; imagens maiores são reduzidas
+    # só para exibição (os cliques voltam às coordenadas originais).
     largura_max_exibicao: int = 1200
 
 
@@ -33,31 +32,25 @@ class ConfigPreprocessamento:
 
 
 @dataclass
-class ConfigSegmentacao:
-    # Limiar da semente escura (parte superior, escura/amarelada).
-    limiar_semente: int = 80
-    # Threshold adaptativo do filamento.
-    bloco_adaptativo: int = 31  # ímpar
-    c_adaptativo: int = 5
-    # Morfologia.
-    kernel_morfologico: int = 3
-    iter_abertura: int = 1
-    iter_fechamento: int = 2
-    # Área mínima (px) de um componente para contar como plântula.
-    area_minima_px: int = 200
-
-
-@dataclass
-class ConfigEsqueleto:
-    # Comprimento mínimo (px) de um ramo para NÃO ser podado (pruning).
-    comprimento_min_ramo_px: int = 15
-
-
-@dataclass
 class ConfigMedicao:
     # Suavização do caminho por spline antes de somar comprimentos.
     suavizar_caminho: bool = True
     suavizacao_spline: float = 2.0
+
+
+@dataclass
+class ConfigLivewire:
+    # Medição semiautomática por caminho de custo mínimo (ADR 0001).
+    # Custo: realce black-hat → filamento fica barato, papel caro.
+    blackhat_kernel: int = 21        # ímpar; deve ser > largura do filamento
+    custo_gamma: float = 3.0         # afia o contraste do custo
+    margem_bbox_px: int = 60         # margem do recorte onde o caminho é roteado
+    # Colo: detectado pela espessura de uma máscara de filamento (black-hat).
+    limiar_blackhat: int = 10        # limiar da máscara de espessura (0 = Otsu)
+    # Snap do topo: detecção da semente escura para "grudar" o clique do topo.
+    limiar_semente: int = 80         # luminância abaixo disto = semente
+    semente_area_min: int = 50       # área mín. (px) para contar como semente
+    snap_raio_px: int = 45           # raio (px) para grudar o topo na semente
 
 
 @dataclass
@@ -73,9 +66,8 @@ class ConfigRenderizacao:
 class Config:
     calibracao: ConfigCalibracao = field(default_factory=ConfigCalibracao)
     preprocessamento: ConfigPreprocessamento = field(default_factory=ConfigPreprocessamento)
-    segmentacao: ConfigSegmentacao = field(default_factory=ConfigSegmentacao)
-    esqueleto: ConfigEsqueleto = field(default_factory=ConfigEsqueleto)
     medicao: ConfigMedicao = field(default_factory=ConfigMedicao)
+    livewire: ConfigLivewire = field(default_factory=ConfigLivewire)
     renderizacao: ConfigRenderizacao = field(default_factory=ConfigRenderizacao)
 
     # Salvar imagens intermediárias em output/debug/.
