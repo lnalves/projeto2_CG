@@ -1,10 +1,6 @@
-"""Utilitários de exibição: ajustar imagens para caber na tela do usuário.
-
+"""
 As janelas interativas (calibração e live-wire) usam `WINDOW_AUTOSIZE`, então o
-tamanho da janela é o tamanho da imagem exibida. Como as fotos são em retrato
-(mais altas que largas), limitar só a largura deixava a janela mais alta que o
-monitor. Aqui a imagem é reduzida para caber na **largura e na altura** úteis da
-tela, com uma margem para barra de título e barra de tarefas.
+tamanho da janela é o tamanho da imagem exibida. Aqui a imagem é reduzida para caber na **largura e na altura** úteis da tela
 """
 
 from __future__ import annotations
@@ -27,7 +23,7 @@ def tamanho_tela(padrao: tuple[int, int] = _TELA_PADRAO) -> tuple[int, int]:
             return root.winfo_screenwidth(), root.winfo_screenheight()
         finally:
             root.destroy()
-    except Exception as exc:  # tkinter ausente, sem display, etc.
+    except Exception as exc:  
         log.debug("Tamanho da tela indisponível ({}) — usando padrão {}.", exc, padrao)
         return padrao
 
