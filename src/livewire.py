@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from skimage.graph import route_through_array
 
+from display import ajustar_exibicao
 from log import log
 from measure import medir_caminho
 from render import ResultadoPlantula
@@ -32,9 +33,18 @@ def _blackhat_raw(luminancia: np.ndarray, kernel_size: int) -> np.ndarray:
 
 
 def _mascara_blackhat(luminancia: np.ndarray, kernel_size: int, limiar: int) -> np.ndarray:
-    """Máscara binária do filamento por black-hat seguido de threshold."""
+    """Máscara binária do filamento por black-hat seguido de threshold.
+
+    O `_blackhat_raw` devolve valores normalizados em [0, 1]; aqui ele é
+    reescalado para 0–255 para casar com `limiar_blackhat` (escala 0–255).
+    `limiar <= 0` usa Otsu automático.
+    """
     bh = _blackhat_raw(luminancia, kernel_size)
-    _, mascara = cv2.threshold(bh, limiar, 1, cv2.THRESH_BINARY)
+    bh8 = (bh * 255.0).astype(np.uint8)
+    if limiar <= 0:
+        _, mascara = cv2.threshold(bh8, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    else:
+        _, mascara = cv2.threshold(bh8, int(limiar), 1, cv2.THRESH_BINARY)
     return mascara.astype(np.uint8)
 
 
@@ -116,17 +126,95 @@ def indice_colo(caminho: list, espessura: np.ndarray) -> int:
 
 # --- Sementes (snap do topo) -----------------------------------------------
 
+def detectar_roi_papel(canais, config) -> np.ndarray | None:
+    """Máscara (uint8 0/255) da região do papel-filtro, ou None se não confiável.
+
+    O papel é a maior mancha clara (V alto) e pouco saturada (branca) da cena;
+    régua, rótulos e bordas da caixa ficam de fora. Retorna o fecho convexo
+    dessa mancha preenchido. Devolve None (sem restrição) se a ROI estiver
+    desligada ou cobrir menos que `roi_area_min_frac` da imagem — assim a
+    filtragem nunca descarta sementes por uma detecção de papel ruim.
+    """
+    lw = config.livewire
+    if not lw.roi_papel:
+        return None
+
+    h, w = canais.valor.shape[:2]
+    candidato = (
+        (canais.valor >= int(lw.roi_valor_min)) & (canais.saturacao <= int(lw.roi_sat_max))
+    ).astype(np.uint8) * 255
+
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (int(lw.roi_morfologia_px),) * 2)
+    candidato = cv2.morphologyEx(candidato, cv2.MORPH_CLOSE, k)
+    candidato = cv2.morphologyEx(candidato, cv2.MORPH_OPEN, k)
+
+    num, lab, stats, _ = cv2.connectedComponentsWithStats(candidato, connectivity=8)
+    if num <= 1:
+        log.warning("ROI do papel não encontrada — sem restrição.")
+        return None
+
+    maior = 1 + int(np.argmax([stats[i, cv2.CC_STAT_AREA] for i in range(1, num)]))
+    area = int(stats[maior, cv2.CC_STAT_AREA])
+    if area < lw.roi_area_min_frac * h * w:
+        log.warning(
+            "ROI do papel pouco confiável ({:.1%} da imagem < {:.0%}) — sem restrição.",
+            area / (h * w), lw.roi_area_min_frac,
+        )
+        return None
+
+    mascara = (lab == maior).astype(np.uint8) * 255
+    contornos, _ = cv2.findContours(mascara, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    hull = cv2.convexHull(max(contornos, key=cv2.contourArea))
+    roi = np.zeros((h, w), dtype=np.uint8)
+    cv2.drawContours(roi, [hull], -1, 255, -1)
+    log.info("ROI do papel: {:.1%} da imagem.", area / (h * w))
+    return roi
+
+
 def detectar_sementes(canais, config) -> list:
-    """Lista de plântulas-semente como arrays (M, 2) de pixels (y, x)."""
+    """Lista de plântulas-semente como arrays (M, 2) de pixels (y, x).
+
+    A semente é escura (V baixo). Para não confundir com régua, rótulos e
+    bordas da caixa — que também são escuros — os componentes são filtrados por:
+      - abertura morfológica, que apaga traços finos (linhas da régua/borda);
+      - faixa de área [min, max], que descarta ruído e sombras grandes;
+      - razão de aspecto máxima, que descarta estruturas alongadas;
+      - ROI do papel-filtro, que descarta o que está fora do papel.
+    """
     lw = config.livewire
     _, sem = cv2.threshold(canais.valor, int(lw.limiar_semente), 255, cv2.THRESH_BINARY_INV)
-    num, rot, stats, _ = cv2.connectedComponentsWithStats(sem, connectivity=8)
+
+    abertura = int(lw.semente_abertura_px)
+    if abertura > 0:
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (abertura, abertura))
+        sem = cv2.morphologyEx(sem, cv2.MORPH_OPEN, kernel)
+
+    roi = detectar_roi_papel(canais, config)
+
+    num, rot, stats, centroides = cv2.connectedComponentsWithStats(sem, connectivity=8)
+    amin, amax = int(lw.semente_area_min), int(lw.semente_area_max)
+    asp_max = float(lw.semente_aspecto_max)
     sementes = []
-    minimo = int(lw.semente_area_min)
+    fora_roi = 0
     for lbl in range(1, num):
-        if stats[lbl, cv2.CC_STAT_AREA] >= minimo:
-            sementes.append(np.argwhere(rot == lbl))
-    log.info("Detectadas {} sementes (área mín. {}px)", len(sementes), minimo)
+        area = stats[lbl, cv2.CC_STAT_AREA]
+        if not (amin <= area <= amax):
+            continue
+        bw = stats[lbl, cv2.CC_STAT_WIDTH]
+        bh = stats[lbl, cv2.CC_STAT_HEIGHT]
+        aspecto = max(bw, bh) / max(1, min(bw, bh))
+        if aspecto > asp_max:
+            continue
+        if roi is not None:
+            cx, cy = centroides[lbl]
+            if roi[int(round(cy)), int(round(cx))] == 0:
+                fora_roi += 1
+                continue
+        sementes.append(np.argwhere(rot == lbl))
+    log.info(
+        "Detectadas {} sementes (área {}–{}px, aspecto ≤ {:.1f}, {} fora da ROI)",
+        len(sementes), amin, amax, asp_max, fora_roi,
+    )
     return sementes
 
 
@@ -177,14 +265,6 @@ def medir_par(
 # --- Ferramenta interativa (HighGUI) ----------------------------------------
 
 
-def _ajustar_exibicao(imagem, largura_max):
-    h, w = imagem.shape[:2]
-    if w <= largura_max:
-        return imagem, 1.0
-    s = largura_max / float(w)
-    return cv2.resize(imagem, (largura_max, int(round(h * s))), interpolation=cv2.INTER_AREA), s
-
-
 class LiveWireTool:
     """Interface HighGUI interativa de cliques para medição live-wire.
 
@@ -207,8 +287,8 @@ class LiveWireTool:
         self.espessura = mapa_espessura(canais, config)
         self.sementes = detectar_sementes(canais, config)
 
-        self.disp, self.escala_disp = _ajustar_exibicao(
-            imagem, config.calibracao.largura_max_exibicao,
+        self.disp, self.escala_disp = ajustar_exibicao(
+            imagem, config.calibracao.largura_max_exibicao, config.calibracao.margem_tela,
         )
         self.janela = "Live-wire: topo->ponta | dir=colo | z=desfaz ENTER=ok ESC=cancela"
         cv2.namedWindow(self.janela, cv2.WINDOW_AUTOSIZE)

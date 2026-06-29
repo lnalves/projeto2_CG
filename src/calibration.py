@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from display import ajustar_exibicao
 from log import log
 
 
@@ -75,7 +76,7 @@ def _calibrar_manual(imagem, cal) -> ResultadoCalibracao | None:
 
 
 def _dois_cliques(imagem, cal) -> list[tuple[int, int]] | None:
-    exibicao, escala = _ajustar_exibicao(imagem, cal.largura_max_exibicao)
+    exibicao, escala = ajustar_exibicao(imagem, cal.largura_max_exibicao, cal.margem_tela)
     janela = "Calibracao: clique 2 pontos (dist. conhecida) | ENTER ok, ESC cancela"
     log.info("Calibração: clique 2 pontos de distância conhecida ({:.0f}mm).", cal.distancia_conhecida_mm)
     cliques: list[tuple[int, int]] = []
@@ -112,15 +113,3 @@ def _dois_cliques(imagem, cal) -> list[tuple[int, int]] | None:
         cv2.destroyWindow(janela)
 
     return cliques if len(cliques) == 2 else None
-
-
-def _ajustar_exibicao(imagem, largura_max):
-    """Reduz a imagem para caber na largura máxima de exibição."""
-    h, w = imagem.shape[:2]
-    if w <= largura_max:
-        return imagem, 1.0
-    escala = largura_max / float(w)
-    exibicao = cv2.resize(
-        imagem, (largura_max, int(round(h * escala))), interpolation=cv2.INTER_AREA,
-    )
-    return exibicao, escala

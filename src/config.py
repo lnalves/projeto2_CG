@@ -16,7 +16,8 @@ class CalibracaoConfig(BaseModel):
     distancia_conhecida_mm: float = Field(default=90.0, gt=0, description="Distância real (mm) entre os 2 pontos da calibração manual.")
     confianca_minima_auto: float = Field(default=0.6, ge=0, le=1, description="Confiança mínima para detecção automática dos ticks.")
     espacamento_tick_mm: float = Field(default=1.0, gt=0, description="Distância real (mm) entre dois ticks consecutivos da régua.")
-    largura_max_exibicao: int = Field(default=1200, ge=200, le=4000, description="Largura máxima (px) das janelas interativas.")
+    largura_max_exibicao: int = Field(default=1200, ge=200, le=4000, description="Teto de largura (px) das janelas interativas, além do limite da tela.")
+    margem_tela: float = Field(default=0.9, ge=0.3, le=1.0, description="Fração da tela usada pelas janelas (deixa espaço p/ barra de título/tarefas).")
 
 
 class PreprocessamentoConfig(BaseModel):
@@ -41,9 +42,17 @@ class LivewireConfig(BaseModel):
     custo_gamma: float = Field(default=3.0, ge=0.1, le=10, description="Gamma da imagem de custo (afia contraste).")
     margem_bbox_px: int = Field(default=60, ge=10, le=500, description="Margem do recorte para roteamento do caminho.")
     bbox_area_max_px: int = Field(default=2_000_000, ge=100_000, le=50_000_000, description="Área máxima do recorte (px²) para roteamento.")
-    limiar_blackhat: int = Field(default=10, ge=0, le=255, description="Limiar da máscara de espessura (0 = Otsu).")
+    limiar_blackhat: int = Field(default=0, ge=0, le=255, description="Limiar (0–255) da máscara de espessura do filamento (0 = Otsu automático).")
     limiar_semente: int = Field(default=80, ge=0, le=255, description="Luminância máxima da semente (abaixo disto = semente).")
-    semente_area_min: int = Field(default=50, ge=10, le=10_000, description="Área mínima (px) de um CC para ser semente.")
+    semente_area_min: int = Field(default=80, ge=10, le=10_000, description="Área mínima (px) de um CC para ser semente.")
+    semente_area_max: int = Field(default=3000, ge=100, le=100_000, description="Área máxima (px) de um CC para ser semente (descarta bordas/sombras grandes).")
+    semente_aspecto_max: float = Field(default=4.0, ge=1.0, le=50, description="Razão de aspecto máxima do CC (descarta linhas finas: régua, bordas da caixa).")
+    semente_abertura_px: int = Field(default=3, ge=0, le=15, description="Abertura morfológica (px) antes de rotular (remove traços finos; 0 desliga).")
+    roi_papel: bool = Field(default=True, description="Restringe a detecção de sementes à ROI do papel-filtro (descarta régua/rótulos/bordas).")
+    roi_valor_min: int = Field(default=150, ge=0, le=255, description="Luminância V mínima de um pixel candidato a papel.")
+    roi_sat_max: int = Field(default=60, ge=0, le=255, description="Saturação máxima de um pixel candidato a papel (branco = pouco saturado).")
+    roi_area_min_frac: float = Field(default=0.1, ge=0.01, le=1.0, description="Fração mínima da imagem que o papel deve cobrir; abaixo disto a ROI é ignorada.")
+    roi_morfologia_px: int = Field(default=15, ge=1, le=51, description="Kernel (px) de fechamento/abertura da máscara do papel.")
     snap_raio_px: int = Field(default=45, ge=5, le=200, description="Raio (px) para snap do topo na semente mais próxima.")
 
     @model_validator(mode="after")
